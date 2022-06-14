@@ -1,5 +1,6 @@
-import util, random, sys, pickle, collections, operator, itertools, time, math, os
+import random, sys, pickle, collections, operator, itertools, time, math, os
 from collections import defaultdict
+from .util import *
 import numpy as np
 
 # k and BETA for La Fleur dataset
@@ -27,13 +28,13 @@ def get_matrices(two_mer_encoder, three_mer_encoder, spacer_encoder, coeffs):
     spacs   = coeffs.tolist()[256+64+16:256+64+16+3]
 
     # make dG matrices for each feature
-    dg10_0  = util.get_dg_matrices(ref10_0,three_mer_encoder)
-    dg10_3  = util.get_dg_matrices(ref10_3,three_mer_encoder)
-    dg35_0  = util.get_dg_matrices(ref35_0,three_mer_encoder)
-    dg35_3  = util.get_dg_matrices(ref35_3,three_mer_encoder)
-    dmers   = util.get_dg_matrices(discs,three_mer_encoder)
-    x10mers = util.get_dg_matrices(x10,two_mer_encoder)
-    spacers = util.get_dg_matrices(spacs, spacer_encoder)
+    dg10_0  = get_dg_matrices(ref10_0,three_mer_encoder)
+    dg10_3  = get_dg_matrices(ref10_3,three_mer_encoder)
+    dg35_0  = get_dg_matrices(ref35_0,three_mer_encoder)
+    dg35_3  = get_dg_matrices(ref35_3,three_mer_encoder)
+    dmers   = get_dg_matrices(discs,three_mer_encoder)
+    x10mers = get_dg_matrices(x10,two_mer_encoder)
+    spacers = get_dg_matrices(spacs, spacer_encoder)
 
     return dg10_0, dg10_3, dg35_0, dg35_3, dmers, x10mers, spacers
 
@@ -66,7 +67,7 @@ def scan_arbitrary(inputSequence, two_mer_encoder, three_mer_encoder, model, int
                     # seq_query[(float(dG_bind), float(dG_total), TSS_distance)] = ((tempUP, temp35, tempspacer, temp10, tempdisc, tempITR),(dg10, dg35, dg_disc, dg_ITR, dg_ext10, dg_spacer, dg_UP))
                     seq_query[(float(dG_total), float(dG_apparent), TSS_distance)] = ((tempUP, temp35, tempspacer, temp10, tempdisc, tempITR),(dg10, dg35, dg_disc, dg_ITR, dg_ext10, dg_spacer, dg_UP))
 
-    print "best: ", min(seq_query.items(), key=operator.itemgetter(0))
+    print("best: ", min(seq_query.items(), key=operator.itemgetter(0)))
 
     best = (collections.OrderedDict(sorted(seq_query.items())), min(seq_query.items(), key=operator.itemgetter(0)))
     return best, seq_query
@@ -86,11 +87,11 @@ def linear_free_energy_model(UP, h35, spacer, h10, disc, ITR, dg10_0, dg10_3, dg
     spacer_length   = str(len(spacer))
 
     # NUMERICAL FEATURES
-    dg_dna,dg_rna,dg_ITR     = util.calc_DNA_RNA_hybrid_energy(ITR) # calc R-loop strength
-    rigidity                 = util.calc_rigidity(seq = UP + h35 + spacer[0:14])
+    dg_dna,dg_rna,dg_ITR     = calc_DNA_RNA_hybrid_energy(ITR) # calc R-loop strength
+    rigidity                 = calc_rigidity(seq = UP + h35 + spacer[0:14])
 
-    width_proxy_prox = util.calc_groove_width(prox_UP)
-    width_proxy_dist = util.calc_groove_width(dist_UP)
+    width_proxy_prox = calc_groove_width(prox_UP)
+    width_proxy_dist = calc_groove_width(dist_UP)
 
     # NORMALIZE NUMERICAL FEATURES BY MAX IN TRAINING SET
     numericals         = np.array([width_proxy_dist, width_proxy_prox, dg_ITR, rigidity])
@@ -119,9 +120,9 @@ def predict(sequence, constraints):
     layer1 = np.load('free_energy_coeffs.npy')
     inters = np.load('model_intercept.npy')
 
-    two_mer_encoder   = util.kmer_encoders(k = 2)
-    three_mer_encoder = util.kmer_encoders(k = 3)
-    spacer_encoder    = util.length_encoders(16, 18)
+    two_mer_encoder   = kmer_encoders(k = 2)
+    three_mer_encoder = kmer_encoders(k = 3)
+    spacer_encoder    = length_encoders(16, 18)
     dg10_0, dg10_3, dg35_0, dg35_3, dmers, x10mers, spacers = get_matrices(two_mer_encoder = two_mer_encoder, three_mer_encoder = three_mer_encoder, spacer_encoder = spacer_encoder, coeffs = layer1)
 
     # Scan DNA and return predictions
@@ -143,9 +144,9 @@ class Promoter_Calculator(object):
         self.layer1 = np.load(path + '/free_energy_coeffs.npy')
         self.inters = np.load(path + '/model_intercept.npy')
 
-        self.two_mer_encoder   = util.kmer_encoders(k = 2)
-        self.three_mer_encoder = util.kmer_encoders(k = 3)
-        self.spacer_encoder    = util.length_encoders(16, 18)
+        self.two_mer_encoder   = kmer_encoders(k = 2)
+        self.three_mer_encoder = kmer_encoders(k = 3)
+        self.spacer_encoder    = length_encoders(16, 18)
         self.dg10_0, self.dg10_3, self.dg35_0, self.dg35_3, self.dmers, self.x10mers, self.spacers = get_matrices(two_mer_encoder = self.two_mer_encoder, three_mer_encoder = self.three_mer_encoder, spacer_encoder = self.spacer_encoder, coeffs = self.layer1)
 
         self.model = self.layer1
@@ -295,19 +296,4 @@ class Promoter_Calculator(object):
 
         best = (collections.OrderedDict(sorted(seq_query.items())), min(seq_query.items(), key=operator.itemgetter(0)))
         return best, seq_query
-
-if __name__ == "__main__":
-
-    begin = time.time()
-    sequence = "".join([random.choice(['A','G','C','T']) for x in range(1000)])
-    calc = Promoter_Calculator()
-    calc.run(sequence, TSS_range = [0, len(sequence)])
-    output = calc.output()
-    for (TSS, result) in output['Forward_Predictions_per_TSS'].items():
-        print "Fwd TSS: %s. TX Rate: %s. Calcs: %s" % (TSS, result['Tx_rate'], str(result) )
-    for (TSS, result) in output['Reverse_Predictions_per_TSS'].items():
-        print "Rev TSS: %s. TX Rate: %s. Calcs: %s" % (TSS, result['Tx_rate'], str(result) )
-
-    print "Elapsed Time: ", time.time() - begin, " seconds."
-
 

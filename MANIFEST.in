@@ -1,0 +1,3 @@
+include promoter-calculator/free_energy_coeffs.npy
+include promoter-calculator/model_intercept.npy
+include promoter-calculator/LICENSE

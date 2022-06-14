@@ -1,1 +1,1 @@
-__all__ = ["Promoter_Calculator_v1_0"]
+__name__ = "promoter_calculator"
