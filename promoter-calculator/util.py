@@ -1,8 +1,7 @@
 from sklearn.preprocessing import OneHotEncoder, LabelEncoder
-from Bio.Seq               import Seq
-from scipy                 import stats
+from Bio.Seq import Seq
+from scipy import stats
 import numpy as np
-
 import itertools
 import collections
 import operator
@@ -32,8 +31,8 @@ stacking_dict = {'AA' :-2.41,
                  }
 
 average_twist = {'AA' : 35.6, 'TT' : 35.6, #revcomp
-                 'AT':  32.1, 'AT' : 32.1, #revcomp
-                 'TA':  35.3, 'TA' : 35.3, #revcomp
+                 'AT':  32.1, #'AT' : 32.1, revcomp
+                 'TA':  35.3, #'TA' : 35.3, revcomp
                  'GG':  33.65, 'CC' : 33.65, #revcomp
                  'GC':  40.2,
                  'CG':  29.9,
@@ -41,20 +40,20 @@ average_twist = {'AA' : 35.6, 'TT' : 35.6, #revcomp
                  'GA':  36.8, 'TC' : 36.8, #revcomp
                  'AC':  34.0, 'GT' : 34.0, #revcomp
                  'CA':  34.4, 'TG' : 34.4 #revcomp
-                 }
+                 } # CR - Duplicate keys in dictionary?
 
 # Sequence dependence of DNA bending rigidity, Geggier and Vologodskii
 persistence   = {'AA' : 50.4, 'TT' : 50.4, #revcomp
                  'AC':  55.4, 'GT' : 55.4, #revcomp
                  'AG':  51.0, 'CT' : 51.0, #revcomp
-                 'AT':  40.9, 'AT' : 40.9, #revcomp
+                 'AT':  40.9, #'AT' : 40.9, revcomp
                  'CA':  46.7, 'TG' : 46.7, #revcomp
                  'CC':  41.7, 'GG' : 41.7, #revcomp
                  'CG':  56.0,
                  'GA':  54.4, 'TC' : 54.4, #revcomp
                  'GC':  44.6,
                  'TA':  44.7,
-                }
+                } # CR - Duplicate keys in dictionary?
 RNA_DNA_hybrids = {'TT': -1.0,
                    'TG': -2.1,
                    'TC': -1.8,

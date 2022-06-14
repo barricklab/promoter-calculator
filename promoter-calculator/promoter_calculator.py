@@ -1,22 +1,32 @@
+'''version 1.1'''
+
 import random, sys, pickle, collections, operator, itertools, time, math, os
-from collections import defaultdict
 from .util import *
+from collections import defaultdict
 import numpy as np
+import math
+from copy import copy
+import argparse
+import os
+from dataclasses import dataclass
 
 # k and BETA for La Fleur dataset
 LOGK   = -2.80271176
 BETA    = 0.81632623
 
 def unpickler(infile):
+    """ Unpickle a file """
     with open(infile, 'rb') as handle:
         obj= pickle.load(handle)
     return obj
 
 def _revcomp(seq):
+    """ Reverse complement a sequence """
     revcomp = {'U' : 'A', 'A' : 'T', 'G' : 'C', 'T' : 'A', 'C' : 'G'}
     return "".join([revcomp[letter] for letter in seq[::-1] ])
 
 def get_matrices(two_mer_encoder, three_mer_encoder, spacer_encoder, coeffs):
+    """ Get matrices for linear model """
 
     #Extract dG values from model coefficients
     ref10_0 = coeffs.tolist()[0:64]
@@ -38,8 +48,8 @@ def get_matrices(two_mer_encoder, three_mer_encoder, spacer_encoder, coeffs):
 
     return dg10_0, dg10_3, dg35_0, dg35_3, dmers, x10mers, spacers
 
-# Scan sequence left to right with no TSS information. Calc dG of all possible promoter configurations.
-def scan_arbitrary(inputSequence, two_mer_encoder, three_mer_encoder, model, inters, constraints, dg10_0, dg10_3, dg35_0, dg35_3, dmers, x10mers, spacers):
+def scan_arbitrary(inputSequence, model, inters, constraints, dg10_0, dg10_3, dg35_0, dg35_3, dmers, x10mers, spacers):
+    """Scan sequence left to right with no TSS information. Calc dG of all possible promoter configurations."""
     seq_query = {}
     upstream = constraints[0]
     downstream = constraints[1]
@@ -60,12 +70,24 @@ def scan_arbitrary(inputSequence, two_mer_encoder, three_mer_encoder, model, int
                 if len(tempITR) < 20:
                     continue
                 else:
-                    dG_total, dG_apparent, dg10, dg35, dg_disc, dg_ITR, dg_ext10, dg_spacer, dg_UP= linear_free_energy_model(tempUP, temp35, tempspacer, temp10, tempdisc, tempITR, dg10_0, dg10_3, dg35_0, dg35_3, dmers, x10mers, spacers, model, inters)
-                    dG_bind  = dg10 + dg35 + dg_spacer + dg_ext10 + dg_UP
-                    # dG_bind  = dg10 + dg_ext10 + dg_spacer + dg_UP
+                    model_results= linear_free_energy_model(tempUP,
+                                                            temp35,
+                                                            tempspacer,
+                                                            temp10,
+                                                            tempdisc,
+                                                            tempITR,
+                                                            dg10_0,
+                                                            dg10_3,
+                                                            dg35_0,
+                                                            dg35_3,
+                                                            dmers,
+                                                            x10mers,
+                                                            spacers,
+                                                            model,
+                                                            inters)
                     TSS_distance = i + len(tempUP) + len(temp35) + len(tempspacer) + len(temp10) + len(tempdisc)
                     # seq_query[(float(dG_bind), float(dG_total), TSS_distance)] = ((tempUP, temp35, tempspacer, temp10, tempdisc, tempITR),(dg10, dg35, dg_disc, dg_ITR, dg_ext10, dg_spacer, dg_UP))
-                    seq_query[(float(dG_total), float(dG_apparent), TSS_distance)] = ((tempUP, temp35, tempspacer, temp10, tempdisc, tempITR),(dg10, dg35, dg_disc, dg_ITR, dg_ext10, dg_spacer, dg_UP))
+                    seq_query[(float(model_results.dg_total), float(model_results.dg_apparent), TSS_distance)] = ((tempUP, temp35, tempspacer, temp10, tempdisc, tempITR),(model_results.dg_10, model_results.dg_35, model_results.dg_disc, model_results.dg_ITR, model_results.dg_ext10, model_results.dg_spacer, model_results.dg_UP))
 
     print("best: ", min(seq_query.items(), key=operator.itemgetter(0)))
 
@@ -73,6 +95,7 @@ def scan_arbitrary(inputSequence, two_mer_encoder, three_mer_encoder, model, int
     return best, seq_query
 
 def linear_free_energy_model(UP, h35, spacer, h10, disc, ITR, dg10_0, dg10_3, dg35_0, dg35_3, dmers, x10mers, spacers, coeffs, inters):
+    """ Calculate dG of a promoter configuration """
 
     prox_UP = UP[-int(len(UP)/2)::]
     dist_UP = UP[0:int(len(UP)/2)]
@@ -87,7 +110,7 @@ def linear_free_energy_model(UP, h35, spacer, h10, disc, ITR, dg10_0, dg10_3, dg
     spacer_length   = str(len(spacer))
 
     # NUMERICAL FEATURES
-    dg_dna,dg_rna,dg_ITR     = calc_DNA_RNA_hybrid_energy(ITR) # calc R-loop strength
+    _, _, dg_ITR     = calc_DNA_RNA_hybrid_energy(ITR) # calc R-loop strength
     rigidity                 = calc_rigidity(seq = UP + h35 + spacer[0:14])
 
     width_proxy_prox = calc_groove_width(prox_UP)
@@ -112,13 +135,36 @@ def linear_free_energy_model(UP, h35, spacer, h10, disc, ITR, dg10_0, dg10_3, dg
     dG_apparent  = (dg10 + dg35 + dg_disc + dg_ITR + dg_ext10 + dg_spacer + dg_UP + inters[0] - LOGK)/BETA
     dG_total     = dg10 + dg35 + dg_disc + dg_ITR + dg_ext10 + dg_spacer + dg_UP + inters[0]
 
-    return dG_total, dG_apparent, dg10, dg35, dg_disc, dg_ITR, dg_ext10, dg_spacer, dg_UP
+    @dataclass
+    class PromoModelResults:
+        """Class to hold results of the linear free energy model"""
+        dg_total: float
+        dg_apparent: float
+        dg_10: float
+        dg_35: float
+        dg_disc: float
+        dg_ITR: float
+        dg_ext10: float
+        dg_spacer: float
+        dg_UP: float
+
+    return PromoModelResults(dG_total,  # @TODO: Univy this with PromoPredictionResults
+                             dG_apparent,
+                             dg10,
+                             dg35,
+                             dg_disc,
+                             dg_ITR,
+                             dg_ext10,
+                             dg_spacer,
+                             dg_UP)
 
 def predict(sequence, constraints):
+    """ Predict the free energy of a promoter configuration """
 
     # Initialize model and matrices
-    layer1 = np.load('free_energy_coeffs.npy')
-    inters = np.load('model_intercept.npy')
+    install_location = os.path.dirname(os.path.realpath(__file__))
+    layer1 = np.load(install_location + '/free_energy_coeffs.npy')
+    inters = np.load(install_location + '/model_intercept.npy')
 
     two_mer_encoder   = kmer_encoders(k = 2)
     three_mer_encoder = kmer_encoders(k = 3)
@@ -126,15 +172,27 @@ def predict(sequence, constraints):
     dg10_0, dg10_3, dg35_0, dg35_3, dmers, x10mers, spacers = get_matrices(two_mer_encoder = two_mer_encoder, three_mer_encoder = three_mer_encoder, spacer_encoder = spacer_encoder, coeffs = layer1)
 
     # Scan DNA and return predictions
-    (od,result), query   = scan_arbitrary(inputSequence = sequence, two_mer_encoder = two_mer_encoder, three_mer_encoder = three_mer_encoder,
+    (_, result), query   = scan_arbitrary(inputSequence = sequence,
                                             model = layer1, inters = inters, constraints = constraints, dg10_0 = dg10_0, dg10_3 = dg10_3,
                                             dg35_0 =dg35_0, dg35_3 = dg35_3, dmers = dmers , x10mers = x10mers, spacers = spacers)
 
-    dG_total, UP, h35, spacer, h10, disc, ITR = result[0][0], result[1][0][0],result[1][0][1],result[1][0][2],result[1][0][3],result[1][0][4],result[1][0][5]
+    @dataclass
+    class PromoPredictResults:
+        """Class to hold results of the promoter prediction"""
+        dg_total: float
+        query: dict
+        UP: str
+        h35: str
+        spacer: str
+        h10: str
+        disc: str
+        ITR: str
 
-    return dG_total, query, UP, h35, spacer, h10, disc, ITR
+    dG_total, UP, h35, spacer, h10, disc, ITR = result[0][0], result[1][0][0],result[1][0][1],result[1][0][2],result[1][0][3], result[1][0][4], result[1][0][5]
+    return PromoPredictResults(dG_total, query, UP, h35, spacer, h10, disc, ITR)
 
 class Promoter_Calculator(object):
+    """ Class to calculate the free energy of a promoter configuration """
 
     def __init__(self, organism = 'Escherichia coli str. K-12 substr. MG1655',
                        sigmaLevels = {'70' : 1.0, '19' : 0.0, '24' : 0.0, '28' : 0.0, '32' : 0.0, '38' : 0.0, '54' : 0.0}):
@@ -165,6 +223,7 @@ class Promoter_Calculator(object):
 
     # Identify promoter with minimum dG_total (across many possible promoter states) for each TSS position in an inputted sequence.
     def predict(self, sequence, TSS_range):
+        """ Predict the free energy of a promoter configuration """
 
         UPS_length = 24
         HEX35_length = 6
@@ -173,11 +232,6 @@ class Promoter_Calculator(object):
         HEX10_length = 6
         DISC_length_range = [6, 11]
         ITR_length = 20
-
-        MinPromoterSize = UPS_length + UPS_HEX35_SPACER + HEX35_length + SPACER_length_range[0] + HEX10_length + DISC_length_range[0] + ITR_length
-        MaxPromoterSize = UPS_length + UPS_HEX35_SPACER + HEX35_length + SPACER_length_range[1] + HEX10_length + DISC_length_range[1] + ITR_length
-        MinimumTSS = UPS_length + UPS_HEX35_SPACER + HEX35_length + SPACER_length_range[0] + HEX10_length + DISC_length_range[0]
-
         All_States = {}
         Min_States = {}
 
@@ -198,14 +252,32 @@ class Promoter_Calculator(object):
                             temp35     = sequence[ TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length : TSS - DISC_length - HEX10_length - SPACER_length]
                             tempUP     = sequence[ TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_length - UPS_HEX35_SPACER:  TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_HEX35_SPACER]
 
-                            dG_total, dG_apparent, dG_10, dG_35, dG_disc, dG_ITR, dG_ext10, dG_spacer, dG_UP = linear_free_energy_model(tempUP, temp35, tempspacer, temp10, tempdisc, tempITR, self.dg10_0, self.dg10_3, self.dg35_0, self.dg35_3, self.dmers, self.x10mers, self.spacers, self.model, self.inters)
-                            dG_bind  = dG_10 + dG_35 + dG_spacer + dG_ext10 + dG_UP
+                            model_results = linear_free_energy_model(tempUP,
+                                                                     temp35,
+                                                                     tempspacer,
+                                                                     temp10,
+                                                                     tempdisc,
+                                                                     tempITR,
+                                                                     self.dg10_0,
+                                                                     self.dg10_3,
+                                                                     self.dg35_0,
+                                                                     self.dg35_3,
+                                                                     self.dmers,
+                                                                     self.x10mers,
+                                                                     self.spacers,
+                                                                     self.model,
+                                                                     self.inters)
+                            dG_bind = (model_results.dg_10 +
+                                       model_results.dg_35 +
+                                       model_results.dg_spacer +
+                                       model_results.dg_ext10 +
+                                       model_results.dg_UP)
 
-                            Tx_rate = self.K * math.exp(- self.BETA * dG_total )
+                            Tx_rate = self.K * math.exp(- self.BETA * model_results.dg_total )
 
                             result = {'promoter_sequence' : sequence[TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_length - UPS_HEX35_SPACER : TSS + ITR_length ],
                                       'TSS' : TSS, 'UP' : tempUP, 'hex35' : temp35, 'spacer' : tempspacer, 'hex10' : temp10, 'disc' : tempdisc, 'ITR' : tempITR,
-                                      'dG_total' : dG_total, 'dG_10' : dG_10, 'dG_35' : dG_35, 'dG_disc' : dG_disc, 'dG_ITR' : dG_ITR, 'dG_ext10' : dG_ext10, 'dG_spacer' : dG_spacer, 'dG_UP' : dG_UP, 'dG_bind' : dG_bind,
+                                      'dG_total' : model_results.dg_total, 'dG_10' : model_results.dg_10, 'dG_35' : model_results.dg_35, 'dG_disc' : model_results.dg_disc, 'dG_ITR' : model_results.dg_ITR, 'dG_ext10' : model_results.dg_ext10, 'dG_spacer' : model_results.dg_spacer, 'dG_UP' : model_results.dg_UP, 'dG_bind' : dG_bind,
                                       'Tx_rate' : Tx_rate,
                                       'UP_position' : [TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_HEX35_SPACER - UPS_length,
                                                        TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_HEX35_SPACER],
@@ -224,6 +296,7 @@ class Promoter_Calculator(object):
         return (Min_States, All_States)
 
     def run(self, sequence, TSS_range = None):
+        """ Run the predictor """
 
         if TSS_range is None: TSS_range = [0, len(sequence)]
 
@@ -254,6 +327,7 @@ class Promoter_Calculator(object):
         self.Reverse_Predictions_per_TSS = Reverse_Min_States
 
     def output(self):
+        """ Output the results as a dictionary """
         output = {'organism' : self.organism,
                   'sigmaLevels' : self.sigmaLevels,
                   'K' : self.K,
@@ -265,35 +339,136 @@ class Promoter_Calculator(object):
                 }
         return output.copy()
 
-    # Scan sequence left to right with no TSS information. Calc dG of all possible promoter configurations. Return promoter with minimum dG_total.
-    def oldScan(self, inputSequence, preSeq, postSeq):
-        seq_query = {}
-        sequence = preSeq + inputSequence + postSeq
+def promoter_calculator(sequence):
+    begin = time.time()
+    #sequence = "".join([random.choice(['A','G','C','T']) for x in range(100000)])
+    sequence = sequence.upper()
+    output = []
 
-        #print "sequence: ", sequence
+    # Helper function to get raw output
+    def _run_calculator(target, start_pos, end_pos, fraction):
+        calc = Promoter_Calculator()
+        calc.run(target, TSS_range = [0, len(target)])
+        rev_results = calc.output()['Reverse_Predictions_per_TSS']
+        fwd_results = calc.output()['Forward_Predictions_per_TSS']
+        calculator_result = []
+        for i in fwd_results.keys():
+            fwd_results[i]['TSS'] = f"Fwd{fwd_results[i]['TSS']}"
+            fwd_results[i]['UP_position'][0] = start_pos + fwd_results[i]['UP_position'][0]
+            fwd_results[i]['UP_position'][1] = start_pos + fwd_results[i]['UP_position'][1]
+            fwd_results[i]['hex35_position'][0] = start_pos + fwd_results[i]['hex35_position'][0]
+            fwd_results[i]['hex35_position'][1] = start_pos + fwd_results[i]['hex35_position'][1]
+            fwd_results[i]['spacer_position'][0] = start_pos + fwd_results[i]['spacer_position'][0]
+            fwd_results[i]['spacer_position'][1] = start_pos + fwd_results[i]['spacer_position'][1]
+            fwd_results[i]['hex10_position'][0] = start_pos + fwd_results[i]['hex10_position'][0]
+            fwd_results[i]['hex10_position'][1] = start_pos + fwd_results[i]['hex10_position'][1]
+            fwd_results[i]['disc_position'][0] = start_pos + fwd_results[i]['disc_position'][0]
+            fwd_results[i]['disc_position'][1] = start_pos + fwd_results[i]['disc_position'][1]
+            fwd_results[i]['drop'] = False
+            if type(fraction) != str:
+                fwd_results[i]['fraction'] = fraction + 1
+            fwd_results[i]['strand'] = '+'
+            calculator_result.append(copy(fwd_results[i]))
+        for i in rev_results.keys():
+            rev_results[i]['TSS'] = f"Rev{rev_results[i]['TSS']}"
+            rev_results[i]['UP_position'][0] = end_pos - rev_results[i]['UP_position'][0]
+            rev_results[i]['UP_position'][1] = end_pos - rev_results[i]['UP_position'][1]
+            rev_results[i]['hex35_position'][0] = end_pos - rev_results[i]['hex35_position'][0]
+            rev_results[i]['hex35_position'][1] = end_pos - rev_results[i]['hex35_position'][1]
+            rev_results[i]['spacer_position'][0] = end_pos - rev_results[i]['spacer_position'][0]
+            rev_results[i]['spacer_position'][1] = end_pos - rev_results[i]['spacer_position'][1]
+            rev_results[i]['hex10_position'][0] = end_pos - rev_results[i]['hex10_position'][0]
+            rev_results[i]['hex10_position'][1] = end_pos - rev_results[i]['hex10_position'][1]
+            rev_results[i]['disc_position'][0] = end_pos - rev_results[i]['disc_position'][0]
+            rev_results[i]['disc_position'][1] = end_pos - rev_results[i]['disc_position'][1]
+            rev_results[i]['strand'] = '-'
+            rev_results[i]['drop'] = False
+            if type(fraction) != str:
+                rev_results[i]['fraction'] = fraction + 1
+            calculator_result.append(copy(rev_results[i]))
+        for result in calculator_result:
+            result['length'] = len(result['promoter_sequence'])
 
-        # first 20 nt will be initial UP candidate
-        for i in range(0,len(sequence)):
-            tempUP = sequence[i:i+24]
-            temp35 = sequence[i+25:25+i+6]  # leaves 1 nt between h35 and UPs
+        to_keep = []
+        length = len(calculator_result)
+        for i in range(length):
+            percent_complete = i/length*100
+            if percent_complete % 10 == 0:
+                print(f"{percent_complete:.2f}%")
+            promotor = calculator_result.pop(0)
+            if 'drop' not in promotor.keys():
+                promotor['drop'] = False
+            for i, other_promotor in enumerate(calculator_result):
+                if promotor['fraction'] != other_promotor['fraction'] and promotor['fraction'] != 'junction' and other_promotor['fraction'] != 'junction':
+                    continue
+                if promotor['strand'] != other_promotor['strand']:
+                    continue
+                for position_type in ['UP_position', 'hex35_position', 'spacer_position', 'hex10_position', 'disc_position']:
+                    if promotor[position_type] == other_promotor[position_type]:
+                        if promotor['dG_total'] < other_promotor['dG_total']:
+                            promotor['drop'] = True
+                            break
+                        if promotor['dG_total'] > other_promotor['dG_total']:
+                            other_promotor['drop'] = True
+                            break
+                        else:
+                            promotor['drop'] = True
+                            break
+            if promotor['drop'] == False:
+                to_keep.append(promotor)
+        return to_keep
 
-            # bounds defined by what was present during parameterization
-            for j in range(15,21):
-                tempspacer = sequence[i+25+6:25+i+6+j]
-                temp10     = sequence[25+i+j+6:25+i+j+12]
-                for k in range(6,11):
-                    tempdisc  = sequence[25+i+j+12:25+i+j+12+k]
-                    tempITR   =sequence[25+i+j+12+k:45+i+j+12+k]
-                    if len(tempITR) < 20:
-                        continue
-                    else:
-                        dG_total, dG_apparent, dg10, dg35, dg_disc, dg_ITR, dg_ext10, dg_spacer, dg_UP= linear_free_energy_model(tempUP, temp35, tempspacer, temp10, tempdisc, tempITR, self.dg10_0, self.dg10_3, self.dg35_0, self.dg35_3, self.dmers, self.x10mers, self.spacers, self.model, self.inters)
-                        dG_bind  = dg10 + dg35 + dg_spacer + dg_ext10 + dg_UP
-                        # dG_bind  = dg10 + dg_ext10 + dg_spacer + dg_UP
-                        TSS_distance = i + len(tempUP) + len(temp35) + len(tempspacer) + len(temp10) + len(tempdisc)
-                        # seq_query[(float(dG_bind), float(dG_total), TSS_distance)] = ((tempUP, temp35, tempspacer, temp10, tempdisc, tempITR),(dg10, dg35, dg_disc, dg_ITR, dg_ext10, dg_spacer, dg_UP))
-                        seq_query[(float(dG_total), float(dG_apparent), TSS_distance)] = ((tempUP, temp35, tempspacer, temp10, tempdisc, tempITR),(dg10, dg35, dg_disc, dg_ITR, dg_ext10, dg_spacer, dg_UP))
+    # Run raw output of calculator, chunk if necessary
+    fraction_length = 2500
+    if len(sequence) >= 5*fraction_length:
+        print('Large input detected. Chunking sequence into smaller pieces.')
+        fractions = math.floor(len(sequence)/fraction_length)
+        remainder = len(sequence) % fraction_length
+        if remainder > 0:
+            fractions += 1
+        else:
+            # remainder onto the last run
+            pass
+        for i in range(fractions):
+            if i == fractions-1:
+                end_pos = len(sequence)
+            else:
+                end_pos = (i+1)*fraction_length+100
+            if i == 0:
+                start_pos = 0
+            else:
+                start_pos = i*fraction_length-100
+            print(f"Fraction {i+1} from {start_pos} to {end_pos}")
+            target_sequence = sequence[start_pos:end_pos]
+            print("Fraction:", len(target_sequence), "Sequence: ", len(sequence))
 
-        best = (collections.OrderedDict(sorted(seq_query.items())), min(seq_query.items(), key=operator.itemgetter(0)))
-        return best, seq_query
+            result = _run_calculator(target_sequence, start_pos, end_pos, i)
+            output.extend(result)
+
+    else:
+        result = _run_calculator(sequence, 0, len(sequence), 0)
+        output.extend(result)
+
+    # If the DNA is circular, examine the junction
+    ciruclar = False
+    if ciruclar:
+        print("Circular DNA detected. Examining junction.")
+        # Get the junction
+        junction = sequence[-100:] + sequence[:100]
+        result = _run_calculator(junction, len(sequence)-100, len(sequence)+100, "junction")
+        # Filter out promotors that don't cross the junction
+        for result in result:
+            if result['strand'] == '+':
+                bounds = [result['UP_position'][0], result['disc_position'][1]]
+            if result['strand'] == '-':
+                bounds = [result['disc_position'][0], result['UP_position'][1]]
+            if bounds[0] <= 100 and bounds[1] >= 101:
+                output.extend(result)
+
+    print("Removing duplicates.")
+    output = [i for n, i in enumerate(output) if i not in output[n + 1:]] # remove duplicates
+    # Find the best results
+    output.sort(key=lambda x: x['Tx_rate'])
+    output = output[::-1]
+    return output
 
