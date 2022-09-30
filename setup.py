@@ -1,11 +1,5 @@
 from setuptools import setup, find_packages
 
-# Gets Dependencies
-with open('requirements.txt', 'r') as requirements_file:
-    requirements = []
-    for line in requirements_file:
-        requirements.append(line.strip())
-
 setup(
     name="promotercalculator",
     version="1.1",
@@ -14,12 +8,12 @@ setup(
 
     # Project uses reStructuredText, so ensure that the docutils get
     # installed or upgraded on the target machine
-    install_requires=requirements,
+    install_requires=['Bio', 'numpy', 'scikit_learn', 'scipy'],
 
     # metadata to display on PyPI
     author="Cameron Roots",
     author_email="croots@utexas.edu",
-    description="Barrick Lab fork of Salis Lab's promoter-calculator",
+    description="Salis Lab's promoter-calculator (Barrick Lab Fork)",
     keywords="DNA, RNA, promoter, promoter-calculator, calculator, Barrick, Salis, Biology, Bio",
     url="https://github.com/barricklab/promoter-calculator",   # project home page, if any
     project_urls={
@@ -28,7 +22,7 @@ setup(
     },
     include_package_data=True,
     classifiers=[
-        "License :: GNU General Public License v3.0"
+        "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)"
     ],
     entry_points={
         'console_scripts' : [

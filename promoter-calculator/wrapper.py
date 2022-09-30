@@ -5,9 +5,15 @@
 import time
 import math
 from copy import copy
-from .promoter_calculator import Promoter_Calculator
+from .promoter_calculator import Promoter_Calculator, PromoCalcResults
+from dataclasses import dataclass
 
-def promoter_calculator(sequence):
+#@dataclass(frozen=True)
+class PromoCalcResult(PromoCalcResults):
+    pass
+
+
+def promoter_calculator(sequence, quiet=False):
     begin = time.time()
     #sequence = "".join([random.choice(['A','G','C','T']) for x in range(100000)])
     sequence = sequence.upper()
@@ -21,7 +27,8 @@ def promoter_calculator(sequence):
         fwd_results = calc.output()['Forward_Predictions_per_TSS']
         calculator_result = []
         for i in fwd_results.keys():
-            fwd_results[i]['TSS'] = f"Fwd{fwd_results[i]['TSS']}"
+            fwd_results[i]['TSS_name'] = f"Fwd{fwd_results[i]['TSS']}"
+            fwd_results[i]['TSS'] = start_pos + fwd_results[i]['TSS']
             fwd_results[i]['UP_position'][0] = start_pos + fwd_results[i]['UP_position'][0]
             fwd_results[i]['UP_position'][1] = start_pos + fwd_results[i]['UP_position'][1]
             fwd_results[i]['hex35_position'][0] = start_pos + fwd_results[i]['hex35_position'][0]
@@ -38,7 +45,8 @@ def promoter_calculator(sequence):
             fwd_results[i]['strand'] = '+'
             calculator_result.append(copy(fwd_results[i]))
         for i in rev_results.keys():
-            rev_results[i]['TSS'] = f"Rev{rev_results[i]['TSS']}"
+            rev_results[i]['TSS_name'] = f"Rev{rev_results[i]['TSS']}"
+            rev_results[i]['TSS'] = end_pos - rev_results[i]['TSS']
             rev_results[i]['UP_position'][0] = end_pos - rev_results[i]['UP_position'][0]
             rev_results[i]['UP_position'][1] = end_pos - rev_results[i]['UP_position'][1]
             rev_results[i]['hex35_position'][0] = end_pos - rev_results[i]['hex35_position'][0]
@@ -60,9 +68,10 @@ def promoter_calculator(sequence):
         to_keep = []
         length = len(calculator_result)
         for i in range(length):
-            percent_complete = i/length*100
-            if percent_complete % 10 == 0:
-                print(f"{percent_complete:.2f}%")
+            if not quiet:
+                percent_complete = i/length*100
+                if percent_complete % 10 == 0:
+                    print(f"{percent_complete:.2f}%")
             promotor = calculator_result.pop(0)
             if 'drop' not in promotor.keys():
                 promotor['drop'] = False
@@ -89,7 +98,8 @@ def promoter_calculator(sequence):
     # Run raw output of calculator, chunk if necessary
     fraction_length = 2500
     if len(sequence) >= 5*fraction_length:
-        print('Large input detected. Chunking sequence into smaller pieces.')
+        if not quiet:
+            print('Large input detected. Chunking sequence into smaller pieces.')
         fractions = math.floor(len(sequence)/fraction_length)
         remainder = len(sequence) % fraction_length
         if remainder > 0:
@@ -106,9 +116,11 @@ def promoter_calculator(sequence):
                 start_pos = 0
             else:
                 start_pos = i*fraction_length-100
-            print(f"Fraction {i+1} from {start_pos} to {end_pos}")
+            if not quiet:
+                print(f"Fraction {i+1} from {start_pos} to {end_pos}")
             target_sequence = sequence[start_pos:end_pos]
-            print("Fraction:", len(target_sequence), "Sequence: ", len(sequence))
+            if not quiet:
+                print("Fraction:", len(target_sequence), "Sequence: ", len(sequence))
 
             result = _run_calculator(target_sequence, start_pos, end_pos, i)
             output.extend(result)
@@ -120,7 +132,8 @@ def promoter_calculator(sequence):
     # If the DNA is circular, examine the junction
     ciruclar = False
     if ciruclar:
-        print("Circular DNA detected. Examining junction.")
+        if not quiet:
+            print("Circular DNA detected. Examining junction.")
         # Get the junction
         junction = sequence[-100:] + sequence[:100]
         result = _run_calculator(junction, len(sequence)-100, len(sequence)+100, "junction")
@@ -133,7 +146,8 @@ def promoter_calculator(sequence):
             if bounds[0] <= 100 and bounds[1] >= 101:
                 output.extend(result)
 
-    print("Removing duplicates.")
+    if not quiet:
+        print("Removing duplicates.")
     output = [i for n, i in enumerate(output) if i not in output[n + 1:]] # remove duplicates
     # Find the best results
     output.sort(key=lambda x: x['Tx_rate'])

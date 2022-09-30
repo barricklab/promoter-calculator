@@ -34,9 +34,19 @@ def main():
         help="Input DNA/RNA sequence.",
     )
 
+    # @TODO: Add option to specify output file
+    # @TODO: Add option to run quietly
+
     options = parser.parse_args()
+
+    # Show help if no arguments are given 
+    if not options.i:
+        parser.print_help()
+        return
+
+
     if options.i is None:
-        print("No input file provided. Exiting.")
+        print("No input provided. Exiting.")
         return
     if os.path.isfile(options.i):
         print("Input file is a file. Reading sequence from file.")
@@ -45,7 +55,6 @@ def main():
             sequence = f.read()
     else:
         sequence = options.i
-    print("Input sequence:", sequence)
 
     output = promoter_calculator(sequence)
     print_promo_calculator(output)

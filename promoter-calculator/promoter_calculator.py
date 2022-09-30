@@ -14,6 +14,49 @@ from dataclasses import dataclass
 LOGK   = -2.80271176
 BETA    = 0.81632623
 
+@dataclass
+class PromoCalcResults:
+    """Class to hold results of the promoter prediction"""
+    promoter_sequence: str
+    TSS: int
+    UP: str
+    hex35: str
+    spacer: str
+    hex10: str
+    disc: str
+    ITR: str
+    dG_total: float
+    dG_10: float
+    dG_35: float
+    dG_disc: float
+    dG_ITR: float
+    dG_ext10: float
+    dG_spacer: float
+    dG_bind: float
+    dG_UP: float
+    Tx_rate: float
+    UP_position: int
+    hex35_position: int
+    spacer_position: int
+    hex10_position: int
+    disc_position: int
+    fraction: int
+    strand: str
+    drop: bool
+    length: int
+
+    def __getitem__(self, key):
+        if key in self.__annotations__:
+            return getattr(self, key)
+        else:
+            raise KeyError(key)
+
+    def __setitem__(self, key, value):
+        setattr(self, key, value)
+
+    def keys(self):
+        return self.__annotations__.keys()
+
 def unpickler(infile):
     """ Unpickle a file """
     with open(infile, 'rb') as handle:
@@ -275,6 +318,7 @@ class Promoter_Calculator(object):
 
                             Tx_rate = self.K * math.exp(- self.BETA * model_results.dg_total )
 
+
                             result = {'promoter_sequence' : sequence[TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_length - UPS_HEX35_SPACER : TSS + ITR_length ],
                                       'TSS' : TSS, 'UP' : tempUP, 'hex35' : temp35, 'spacer' : tempspacer, 'hex10' : temp10, 'disc' : tempdisc, 'ITR' : tempITR,
                                       'dG_total' : model_results.dg_total, 'dG_10' : model_results.dg_10, 'dG_35' : model_results.dg_35, 'dG_disc' : model_results.dg_disc, 'dG_ITR' : model_results.dg_ITR, 'dG_ext10' : model_results.dg_ext10, 'dG_spacer' : model_results.dg_spacer, 'dG_UP' : model_results.dg_UP, 'dG_bind' : dG_bind,
@@ -286,6 +330,8 @@ class Promoter_Calculator(object):
                                       'hex10_position' : [TSS - DISC_length - HEX10_length, TSS - DISC_length],
                                       'disc_position' : [TSS - DISC_length, TSS]
                                       }
+
+                            result = PromoCalcResults(**result, fraction=None, strand=None, drop=False, length = False)
 
                             All_States[TSS][ (DISC_length, SPACER_length) ] = result
                             if TSS in Min_States:
@@ -338,137 +384,4 @@ class Promoter_Calculator(object):
                   'Reverse_Predictions_per_TSS' : self.Reverse_Predictions_per_TSS
                 }
         return output.copy()
-
-def promoter_calculator(sequence):
-    begin = time.time()
-    #sequence = "".join([random.choice(['A','G','C','T']) for x in range(100000)])
-    sequence = sequence.upper()
-    output = []
-
-    # Helper function to get raw output
-    def _run_calculator(target, start_pos, end_pos, fraction):
-        calc = Promoter_Calculator()
-        calc.run(target, TSS_range = [0, len(target)])
-        rev_results = calc.output()['Reverse_Predictions_per_TSS']
-        fwd_results = calc.output()['Forward_Predictions_per_TSS']
-        calculator_result = []
-        for i in fwd_results.keys():
-            fwd_results[i]['TSS'] = f"Fwd{fwd_results[i]['TSS']}"
-            fwd_results[i]['UP_position'][0] = start_pos + fwd_results[i]['UP_position'][0]
-            fwd_results[i]['UP_position'][1] = start_pos + fwd_results[i]['UP_position'][1]
-            fwd_results[i]['hex35_position'][0] = start_pos + fwd_results[i]['hex35_position'][0]
-            fwd_results[i]['hex35_position'][1] = start_pos + fwd_results[i]['hex35_position'][1]
-            fwd_results[i]['spacer_position'][0] = start_pos + fwd_results[i]['spacer_position'][0]
-            fwd_results[i]['spacer_position'][1] = start_pos + fwd_results[i]['spacer_position'][1]
-            fwd_results[i]['hex10_position'][0] = start_pos + fwd_results[i]['hex10_position'][0]
-            fwd_results[i]['hex10_position'][1] = start_pos + fwd_results[i]['hex10_position'][1]
-            fwd_results[i]['disc_position'][0] = start_pos + fwd_results[i]['disc_position'][0]
-            fwd_results[i]['disc_position'][1] = start_pos + fwd_results[i]['disc_position'][1]
-            fwd_results[i]['drop'] = False
-            if type(fraction) != str:
-                fwd_results[i]['fraction'] = fraction + 1
-            fwd_results[i]['strand'] = '+'
-            calculator_result.append(copy(fwd_results[i]))
-        for i in rev_results.keys():
-            rev_results[i]['TSS'] = f"Rev{rev_results[i]['TSS']}"
-            rev_results[i]['UP_position'][0] = end_pos - rev_results[i]['UP_position'][0]
-            rev_results[i]['UP_position'][1] = end_pos - rev_results[i]['UP_position'][1]
-            rev_results[i]['hex35_position'][0] = end_pos - rev_results[i]['hex35_position'][0]
-            rev_results[i]['hex35_position'][1] = end_pos - rev_results[i]['hex35_position'][1]
-            rev_results[i]['spacer_position'][0] = end_pos - rev_results[i]['spacer_position'][0]
-            rev_results[i]['spacer_position'][1] = end_pos - rev_results[i]['spacer_position'][1]
-            rev_results[i]['hex10_position'][0] = end_pos - rev_results[i]['hex10_position'][0]
-            rev_results[i]['hex10_position'][1] = end_pos - rev_results[i]['hex10_position'][1]
-            rev_results[i]['disc_position'][0] = end_pos - rev_results[i]['disc_position'][0]
-            rev_results[i]['disc_position'][1] = end_pos - rev_results[i]['disc_position'][1]
-            rev_results[i]['strand'] = '-'
-            rev_results[i]['drop'] = False
-            if type(fraction) != str:
-                rev_results[i]['fraction'] = fraction + 1
-            calculator_result.append(copy(rev_results[i]))
-        for result in calculator_result:
-            result['length'] = len(result['promoter_sequence'])
-
-        to_keep = []
-        length = len(calculator_result)
-        for i in range(length):
-            percent_complete = i/length*100
-            if percent_complete % 10 == 0:
-                print(f"{percent_complete:.2f}%")
-            promotor = calculator_result.pop(0)
-            if 'drop' not in promotor.keys():
-                promotor['drop'] = False
-            for i, other_promotor in enumerate(calculator_result):
-                if promotor['fraction'] != other_promotor['fraction'] and promotor['fraction'] != 'junction' and other_promotor['fraction'] != 'junction':
-                    continue
-                if promotor['strand'] != other_promotor['strand']:
-                    continue
-                for position_type in ['UP_position', 'hex35_position', 'spacer_position', 'hex10_position', 'disc_position']:
-                    if promotor[position_type] == other_promotor[position_type]:
-                        if promotor['dG_total'] < other_promotor['dG_total']:
-                            promotor['drop'] = True
-                            break
-                        if promotor['dG_total'] > other_promotor['dG_total']:
-                            other_promotor['drop'] = True
-                            break
-                        else:
-                            promotor['drop'] = True
-                            break
-            if promotor['drop'] == False:
-                to_keep.append(promotor)
-        return to_keep
-
-    # Run raw output of calculator, chunk if necessary
-    fraction_length = 2500
-    if len(sequence) >= 5*fraction_length:
-        print('Large input detected. Chunking sequence into smaller pieces.')
-        fractions = math.floor(len(sequence)/fraction_length)
-        remainder = len(sequence) % fraction_length
-        if remainder > 0:
-            fractions += 1
-        else:
-            # remainder onto the last run
-            pass
-        for i in range(fractions):
-            if i == fractions-1:
-                end_pos = len(sequence)
-            else:
-                end_pos = (i+1)*fraction_length+100
-            if i == 0:
-                start_pos = 0
-            else:
-                start_pos = i*fraction_length-100
-            print(f"Fraction {i+1} from {start_pos} to {end_pos}")
-            target_sequence = sequence[start_pos:end_pos]
-            print("Fraction:", len(target_sequence), "Sequence: ", len(sequence))
-
-            result = _run_calculator(target_sequence, start_pos, end_pos, i)
-            output.extend(result)
-
-    else:
-        result = _run_calculator(sequence, 0, len(sequence), 0)
-        output.extend(result)
-
-    # If the DNA is circular, examine the junction
-    ciruclar = False
-    if ciruclar:
-        print("Circular DNA detected. Examining junction.")
-        # Get the junction
-        junction = sequence[-100:] + sequence[:100]
-        result = _run_calculator(junction, len(sequence)-100, len(sequence)+100, "junction")
-        # Filter out promotors that don't cross the junction
-        for result in result:
-            if result['strand'] == '+':
-                bounds = [result['UP_position'][0], result['disc_position'][1]]
-            if result['strand'] == '-':
-                bounds = [result['disc_position'][0], result['UP_position'][1]]
-            if bounds[0] <= 100 and bounds[1] >= 101:
-                output.extend(result)
-
-    print("Removing duplicates.")
-    output = [i for n, i in enumerate(output) if i not in output[n + 1:]] # remove duplicates
-    # Find the best results
-    output.sort(key=lambda x: x['Tx_rate'])
-    output = output[::-1]
-    return output
 
