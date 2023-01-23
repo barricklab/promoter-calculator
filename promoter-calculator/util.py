@@ -211,7 +211,7 @@ def length_encoders(lower_bound, upper_bound):
     length_array = np.array(length_array)
 
     #one hot encode the array of length into bit vectors
-    onehot_encoder = OneHotEncoder(sparse=False)
+    onehot_encoder = OneHotEncoder(sparse_output=False)
     onehot_encoder.fit(length_array.reshape(-1, 1))
     return onehot_encoder
 
@@ -225,6 +225,6 @@ def kmer_encoders(k):
     kmer_array = np.array(kmer_array)
 
     #one hot encode the sequence
-    onehot_encoder = OneHotEncoder(sparse=False)
+    onehot_encoder = OneHotEncoder(sparse_output=False)
     onehot_encoder.fit(kmer_array.reshape(-1, 1))
     return onehot_encoder

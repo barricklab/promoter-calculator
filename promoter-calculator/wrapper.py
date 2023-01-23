@@ -4,25 +4,54 @@
 
 import time
 import math
+import importlib
 from copy import copy
 from .promoter_calculator import Promoter_Calculator, PromoCalcResults
 from dataclasses import dataclass
+from typing import Callable
+
+if importlib.util.find_spec("progress") is not None:
+    from progress.bar import Bar
+else:
+    Bar = None
+
+def _progress_callback(tasks: int, description:str) -> Callable:
+    # Update the progress bar
+    if Bar is not None:
+        bar = Bar(f'{description}: ', max=tasks)
+    else:
+        return None
+    max = tasks
+    itterations = 0
+
+    def _callback():
+        nonlocal itterations
+        itterations += 1
+        nonlocal max
+        if itterations == max:
+            bar.next()
+            bar.finish()
+            return None
+
+        bar.next()
+        return None
+    return _callback
 
 #@dataclass(frozen=True)
 class PromoCalcResult(PromoCalcResults):
     pass
 
 
-def promoter_calculator(sequence, quiet=False):
+def promoter_calculator(sequence, threads=1, verbosity=1, callback=None):
     begin = time.time()
     #sequence = "".join([random.choice(['A','G','C','T']) for x in range(100000)])
     sequence = sequence.upper()
     output = []
 
     # Helper function to get raw output
-    def _run_calculator(target, start_pos, end_pos, fraction):
-        calc = Promoter_Calculator()
-        calc.run(target, TSS_range = [0, len(target)])
+    def _run_calculator(target, start_pos, end_pos, fraction, callback=None):
+        calc = Promoter_Calculator(threads=threads, verbosity=verbosity)
+        calc.run(target, TSS_range = [0, len(target)], callback=callback)
         rev_results = calc.output()['Reverse_Predictions_per_TSS']
         fwd_results = calc.output()['Forward_Predictions_per_TSS']
         calculator_result = []
@@ -65,40 +94,50 @@ def promoter_calculator(sequence, quiet=False):
         for result in calculator_result:
             result['length'] = len(result['promoter_sequence'])
 
+
+        # Filter out overlapping promoters
+
+        calculator_result.sort(key=lambda x: x['TSS'])
+        SEARCH_RANGE = 10  
+
         to_keep = []
         length = len(calculator_result)
+
+        # Legacy overlap filter
         for i in range(length):
-            if not quiet:
-                percent_complete = i/length*100
-                if percent_complete % 10 == 0:
-                    print(f"{percent_complete:.2f}%")
             promotor = calculator_result.pop(0)
             if 'drop' not in promotor.keys():
                 promotor['drop'] = False
-            for i, other_promotor in enumerate(calculator_result):
-                if promotor['fraction'] != other_promotor['fraction'] and promotor['fraction'] != 'junction' and other_promotor['fraction'] != 'junction':
+            for _, other_promoter in enumerate(calculator_result):
+                if other_promoter['TSS'] > promotor['TSS'] + SEARCH_RANGE:
                     continue
-                if promotor['strand'] != other_promotor['strand']:
+                elif promotor['fraction'] != other_promoter['fraction'] and promotor['fraction'] != 'junction' and other_promoter['fraction'] != 'junction':
+                    continue
+                elif promotor['strand'] != other_promoter['strand']:
                     continue
                 for position_type in ['UP_position', 'hex35_position', 'spacer_position', 'hex10_position', 'disc_position']:
-                    if promotor[position_type] == other_promotor[position_type]:
-                        if promotor['dG_total'] < other_promotor['dG_total']:
+                    if promotor[position_type] == other_promoter[position_type]:
+                        if promotor['dG_total'] < other_promoter['dG_total']:
                             promotor['drop'] = True
                             break
-                        if promotor['dG_total'] > other_promotor['dG_total']:
-                            other_promotor['drop'] = True
+                        if promotor['dG_total'] > other_promoter['dG_total']:
+                            other_promoter['drop'] = True
                             break
                         else:
                             promotor['drop'] = True
                             break
             if promotor['drop'] == False:
                 to_keep.append(promotor)
+        
         return to_keep
+
 
     # Run raw output of calculator, chunk if necessary
     fraction_length = 2500
+
+
     if len(sequence) >= 5*fraction_length:
-        if not quiet:
+        if verbosity >= 2:
             print('Large input detected. Chunking sequence into smaller pieces.')
         fractions = math.floor(len(sequence)/fraction_length)
         remainder = len(sequence) % fraction_length
@@ -107,6 +146,17 @@ def promoter_calculator(sequence, quiet=False):
         else:
             # remainder onto the last run
             pass
+        
+        
+        if not callback:
+            if verbosity >= 1:
+                callback = _progress_callback(description = "Running Promoter Calculator", tasks = (len(sequence) + 2*100*(fractions-1))*2)
+            else:
+                callback = lambda: None
+        
+
+        run_number = 0
+
         for i in range(fractions):
             if i == fractions-1:
                 end_pos = len(sequence)
@@ -116,23 +166,28 @@ def promoter_calculator(sequence, quiet=False):
                 start_pos = 0
             else:
                 start_pos = i*fraction_length-100
-            if not quiet:
-                print(f"Fraction {i+1} from {start_pos} to {end_pos}")
+            
             target_sequence = sequence[start_pos:end_pos]
-            if not quiet:
-                print("Fraction:", len(target_sequence), "Sequence: ", len(sequence))
 
-            result = _run_calculator(target_sequence, start_pos, end_pos, i)
+            result = _run_calculator(target_sequence, start_pos, end_pos, i, callback=callback)
             output.extend(result)
+            run_number += len(target_sequence)
 
     else:
-        result = _run_calculator(sequence, 0, len(sequence), 0)
+        if not callback:
+            if verbosity >= 1:
+                callback = _progress_callback(description = "Running Promoter Calculator", tasks = len(sequence)*2)
+            else:
+                callback = lambda: None
+
+        result = _run_calculator(sequence, 0, len(sequence), 0, callback=callback)
         output.extend(result)
+
 
     # If the DNA is circular, examine the junction
     ciruclar = False
     if ciruclar:
-        if not quiet:
+        if verbosity >= 2:
             print("Circular DNA detected. Examining junction.")
         # Get the junction
         junction = sequence[-100:] + sequence[:100]
@@ -146,7 +201,7 @@ def promoter_calculator(sequence, quiet=False):
             if bounds[0] <= 100 and bounds[1] >= 101:
                 output.extend(result)
 
-    if not quiet:
+    if verbosity >= 2:
         print("Removing duplicates.")
     output = [i for n, i in enumerate(output) if i not in output[n + 1:]] # remove duplicates
     # Find the best results

@@ -51,11 +51,15 @@ def main():
     if os.path.isfile(options.i):
         print("Input file is a file. Reading sequence from file.")
         with open(options.i, 'r') as f:
-            sequence = f.read()
-            sequence = f.read()
+            sequence_lines = f.readlines()
+            for line in sequence_lines:
+                line = line.strip()
+            sequence = "".join(f.readlines())
+            print(sequence)
     else:
         sequence = options.i
 
+    
     output = promoter_calculator(sequence)
     print_promo_calculator(output)
 

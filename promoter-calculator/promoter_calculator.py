@@ -1,6 +1,7 @@
 '''version 1.1'''
 
 import random, sys, pickle, collections, operator, itertools, time, math, os
+import importlib
 from .util import *
 from collections import defaultdict
 import numpy as np
@@ -9,6 +10,39 @@ from copy import copy
 import argparse
 import os
 from dataclasses import dataclass
+from typing import Callable
+import concurrent.futures
+
+# Optional dependency
+if importlib.util.find_spec("progress") is not None:
+    from progress.bar import Bar
+else:
+    Bar = None
+
+def _promocalc_progress_callback(tasks: int) -> Callable:
+    # Update the progress bar
+    if Bar is not None:
+        bar = Bar('Running Promoter Predictions: ', max=tasks)
+    else:
+        return None
+    max = tasks
+    itterations = 0
+
+    def _callback():
+        nonlocal itterations
+        itterations += 1
+        nonlocal max
+        if itterations == max:
+            bar.next()
+            bar.finish()
+            return None
+
+        bar.next()
+        return None
+
+
+    return _callback
+
 
 # k and BETA for La Fleur dataset
 LOGK   = -2.80271176
@@ -238,18 +272,19 @@ class Promoter_Calculator(object):
     """ Class to calculate the free energy of a promoter configuration """
 
     def __init__(self, organism = 'Escherichia coli str. K-12 substr. MG1655',
-                       sigmaLevels = {'70' : 1.0, '19' : 0.0, '24' : 0.0, '28' : 0.0, '32' : 0.0, '38' : 0.0, '54' : 0.0}):
-
+                       sigmaLevels = {'70' : 1.0, '19' : 0.0, '24' : 0.0, '28' : 0.0, '32' : 0.0, '38' : 0.0, '54' : 0.0},
+                       threads=1,
+                       verbosity=1):
         # Initialize model and matrices
+        self.threads = threads
+        self.verbosity = verbosity
         path = os.path.dirname(os.path.abspath(__file__))
         self.layer1 = np.load(path + '/free_energy_coeffs.npy')
         self.inters = np.load(path + '/model_intercept.npy')
-
         self.two_mer_encoder   = kmer_encoders(k = 2)
         self.three_mer_encoder = kmer_encoders(k = 3)
         self.spacer_encoder    = length_encoders(16, 18)
         self.dg10_0, self.dg10_3, self.dg35_0, self.dg35_3, self.dmers, self.x10mers, self.spacers = get_matrices(two_mer_encoder = self.two_mer_encoder, three_mer_encoder = self.three_mer_encoder, spacer_encoder = self.spacer_encoder, coeffs = self.layer1)
-
         self.model = self.layer1
         self.organism = organism
         self.sigmaLevels = sigmaLevels
@@ -265,8 +300,71 @@ class Promoter_Calculator(object):
             self.BETA = 1.636217004872062
 
     # Identify promoter with minimum dG_total (across many possible promoter states) for each TSS position in an inputted sequence.
-    def predict(self, sequence, TSS_range):
+    def predict(self, sequence, TSS_range, callback=None):
         """ Predict the free energy of a promoter configuration """
+
+        min_states, all_states = self.parallelizer(sequence, TSS_range, callback=callback, verbosity=self.verbosity)
+
+        return (min_states, all_states)
+
+    def parallelizer(self, sequence, TSS_range, callback=None, verbosity=1):
+        threads = self.threads
+
+        Min_States = {}
+        All_States = {}
+
+        target_tss = range(TSS_range[0], TSS_range[1])
+
+        model_params = {'dg10_0' : self.dg10_0,
+                        'dg10_3' : self.dg10_3,
+                        'dg35_0' : self.dg35_0,
+                        'dg35_3' : self.dg35_3,
+                        'dmers' : self.dmers,
+                        'x10mers' : self.x10mers,
+                        'spacers' : self.spacers,
+                        'model' : self.model,
+                        'inters' : self.inters,
+                        'K' : self.K,
+                        'BETA' : self.BETA,}
+
+        def _next_position():
+            for next_TSS in target_tss:
+                yield (sequence, next_TSS, model_params)
+        
+        if threads > 1:
+            with concurrent.futures.ProcessPoolExecutor(max_workers=threads) as multiprocessor:
+                futures: list = []
+                for task in _next_position():
+                    future_object = multiprocessor.submit(self.worker, *task)
+                    future_object.add_done_callback(lambda x: callback())
+                    futures.append(future_object)
+                parallel_output = [future.result() for future in futures]
+        else:
+            parallel_output: list = []
+            for task in _next_position():
+                result = self.worker(*task)
+                parallel_output.append(result)
+                callback()
+
+        # Unpack results
+
+        parallel_output = [output for output in parallel_output if output]  # Remove empty results
+
+
+        for result_group in parallel_output:
+            for TSS, DISC_length, SPACER_length, result in result_group:
+                All_States[TSS] = {}
+                All_States[TSS][ (DISC_length, SPACER_length) ] = result
+                if TSS in Min_States:
+                    if result['dG_total'] < Min_States[TSS]['dG_total']:  Min_States[TSS] = result
+                else:
+                    Min_States[TSS] = result
+
+        return (Min_States, All_States)
+
+    @staticmethod
+    def worker(sequence, TSS, model_params):
+        results = []
 
         UPS_length = 24
         HEX35_length = 6
@@ -278,70 +376,62 @@ class Promoter_Calculator(object):
         All_States = {}
         Min_States = {}
 
-        #Specify fixed TSS range
-        for TSS in range(TSS_range[0], TSS_range[1]):
-            All_States[TSS] = {}
-            for DISC_length in range(DISC_length_range[0],DISC_length_range[1]):
+        
 
-                if TSS - DISC_length >= 0 and TSS + ITR_length <= len(sequence):
-                    tempdisc = sequence[ TSS - DISC_length : TSS  ]
-                    tempITR  = sequence[ TSS : TSS + ITR_length]
+        for DISC_length in range(DISC_length_range[0],DISC_length_range[1]):
+            if TSS - DISC_length >= 0 and TSS + ITR_length <= len(sequence):
+                tempdisc = sequence[ TSS - DISC_length : TSS  ]
+                tempITR  = sequence[ TSS : TSS + ITR_length]
 
-                    for SPACER_length in range(SPACER_length_range[0], SPACER_length_range[1]):
+                for SPACER_length in range(SPACER_length_range[0], SPACER_length_range[1]):
 
-                        if TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_length - UPS_HEX35_SPACER >= 0:
-                            temp10     = sequence[ TSS - DISC_length - HEX10_length : TSS - DISC_length]
-                            tempspacer = sequence[ TSS - DISC_length - HEX10_length - SPACER_length : TSS - DISC_length - HEX10_length ]
-                            temp35     = sequence[ TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length : TSS - DISC_length - HEX10_length - SPACER_length]
-                            tempUP     = sequence[ TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_length - UPS_HEX35_SPACER:  TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_HEX35_SPACER]
+                    if TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_length - UPS_HEX35_SPACER >= 0:
+                        temp10     = sequence[ TSS - DISC_length - HEX10_length : TSS - DISC_length]
+                        tempspacer = sequence[ TSS - DISC_length - HEX10_length - SPACER_length : TSS - DISC_length - HEX10_length ]
+                        temp35     = sequence[ TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length : TSS - DISC_length - HEX10_length - SPACER_length]
+                        tempUP     = sequence[ TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_length - UPS_HEX35_SPACER:  TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_HEX35_SPACER]
 
-                            model_results = linear_free_energy_model(tempUP,
-                                                                     temp35,
-                                                                     tempspacer,
-                                                                     temp10,
-                                                                     tempdisc,
-                                                                     tempITR,
-                                                                     self.dg10_0,
-                                                                     self.dg10_3,
-                                                                     self.dg35_0,
-                                                                     self.dg35_3,
-                                                                     self.dmers,
-                                                                     self.x10mers,
-                                                                     self.spacers,
-                                                                     self.model,
-                                                                     self.inters)
-                            dG_bind = (model_results.dg_10 +
-                                       model_results.dg_35 +
-                                       model_results.dg_spacer +
-                                       model_results.dg_ext10 +
-                                       model_results.dg_UP)
+                        model_results = linear_free_energy_model(tempUP,
+                                                                    temp35,
+                                                                    tempspacer,
+                                                                    temp10,
+                                                                    tempdisc,
+                                                                    tempITR,
+                                                                    model_params['dg10_0'],
+                                                                    model_params['dg10_3'],
+                                                                    model_params['dg35_0'],
+                                                                    model_params['dg35_3'],
+                                                                    model_params['dmers'],
+                                                                    model_params['x10mers'],
+                                                                    model_params['spacers'],
+                                                                    model_params['model'],
+                                                                    model_params['inters'])
+                        dG_bind = (model_results.dg_10 +
+                                    model_results.dg_35 +
+                                    model_results.dg_spacer +
+                                    model_results.dg_ext10 +
+                                    model_results.dg_UP)
 
-                            Tx_rate = self.K * math.exp(- self.BETA * model_results.dg_total )
+                        Tx_rate = model_params['K'] * math.exp(- model_params['BETA'] * model_results.dg_total )
 
 
-                            result = {'promoter_sequence' : sequence[TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_length - UPS_HEX35_SPACER : TSS + ITR_length ],
-                                      'TSS' : TSS, 'UP' : tempUP, 'hex35' : temp35, 'spacer' : tempspacer, 'hex10' : temp10, 'disc' : tempdisc, 'ITR' : tempITR,
-                                      'dG_total' : model_results.dg_total, 'dG_10' : model_results.dg_10, 'dG_35' : model_results.dg_35, 'dG_disc' : model_results.dg_disc, 'dG_ITR' : model_results.dg_ITR, 'dG_ext10' : model_results.dg_ext10, 'dG_spacer' : model_results.dg_spacer, 'dG_UP' : model_results.dg_UP, 'dG_bind' : dG_bind,
-                                      'Tx_rate' : Tx_rate,
-                                      'UP_position' : [TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_HEX35_SPACER - UPS_length,
-                                                       TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_HEX35_SPACER],
-                                      'hex35_position' : [TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length, TSS - DISC_length - HEX10_length - SPACER_length],
-                                      'spacer_position' : [TSS - DISC_length - HEX10_length - SPACER_length, TSS - DISC_length - HEX10_length],
-                                      'hex10_position' : [TSS - DISC_length - HEX10_length, TSS - DISC_length],
-                                      'disc_position' : [TSS - DISC_length, TSS]
-                                      }
+                        result = {'promoter_sequence' : sequence[TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_length - UPS_HEX35_SPACER : TSS + ITR_length ],
+                                    'TSS' : TSS, 'UP' : tempUP, 'hex35' : temp35, 'spacer' : tempspacer, 'hex10' : temp10, 'disc' : tempdisc, 'ITR' : tempITR,
+                                    'dG_total' : model_results.dg_total, 'dG_10' : model_results.dg_10, 'dG_35' : model_results.dg_35, 'dG_disc' : model_results.dg_disc, 'dG_ITR' : model_results.dg_ITR, 'dG_ext10' : model_results.dg_ext10, 'dG_spacer' : model_results.dg_spacer, 'dG_UP' : model_results.dg_UP, 'dG_bind' : dG_bind,
+                                    'Tx_rate' : Tx_rate,
+                                    'UP_position' : [TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_HEX35_SPACER - UPS_length,
+                                                    TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_HEX35_SPACER],
+                                    'hex35_position' : [TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length, TSS - DISC_length - HEX10_length - SPACER_length],
+                                    'spacer_position' : [TSS - DISC_length - HEX10_length - SPACER_length, TSS - DISC_length - HEX10_length],
+                                    'hex10_position' : [TSS - DISC_length - HEX10_length, TSS - DISC_length],
+                                    'disc_position' : [TSS - DISC_length, TSS]
+                                    }
 
-                            result = PromoCalcResults(**result, fraction=None, strand=None, drop=False, length = False)
+                        result = PromoCalcResults(**result, fraction=None, strand=None, drop=False, length = False)
+                        results.append([TSS, DISC_length, SPACER_length, result])
+        return results
 
-                            All_States[TSS][ (DISC_length, SPACER_length) ] = result
-                            if TSS in Min_States:
-                                if result['dG_total'] < Min_States[TSS]['dG_total']:  Min_States[TSS] = result
-                            else:
-                                Min_States[TSS] = result
-
-        return (Min_States, All_States)
-
-    def run(self, sequence, TSS_range = None):
+    def run(self, sequence, TSS_range = None, callback=None):
         """ Run the predictor """
 
         if TSS_range is None: TSS_range = [0, len(sequence)]
@@ -352,10 +442,13 @@ class Promoter_Calculator(object):
 
         # print "self.TSS_range_rev: ", self.TSS_range_rev
 
+        if not callback:
+            callback = lambda: None
+
         fwd_sequence = sequence
         rev_sequence = _revcomp(sequence)
-        (Forward_Min_States, Forward_All_States) = self.predict(fwd_sequence, TSS_range = self.TSS_range)
-        (Reverse_Min_States_Temp, Reverse_All_States_Temp) = self.predict(rev_sequence, TSS_range = self.TSS_range_rev)
+        (Forward_Min_States, Forward_All_States) = self.predict(fwd_sequence, TSS_range = self.TSS_range, callback=callback)
+        (Reverse_Min_States_Temp, Reverse_All_States_Temp) = self.predict(rev_sequence, TSS_range = self.TSS_range_rev, callback=callback)
 
         Reverse_Min_States = {}
         Reverse_All_States = {}
@@ -367,7 +460,7 @@ class Promoter_Calculator(object):
         #
         for TSS in Reverse_Min_States_Temp.keys():
             Reverse_Min_States[len(sequence) - TSS] = Reverse_Min_States_Temp[TSS]
-            Reverse_All_States[len(sequence) - TSS] = Reverse_All_States_Temp[TSS]
+            #Reverse_All_States[len(sequence) - TSS] = Reverse_All_States_Temp[TSS]
 
         self.Forward_Predictions_per_TSS = Forward_Min_States
         self.Reverse_Predictions_per_TSS = Reverse_Min_States
