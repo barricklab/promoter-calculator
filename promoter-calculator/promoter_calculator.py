@@ -12,6 +12,7 @@ import os
 from dataclasses import dataclass
 from typing import Callable
 import concurrent.futures
+from memory_profiler import profile
 
 # Optional dependency
 if importlib.util.find_spec("progress") is not None:
@@ -307,6 +308,7 @@ class Promoter_Calculator(object):
 
         return (min_states, all_states)
 
+ 
     def parallelizer(self, sequence, TSS_range, callback=None, verbosity=1):
         threads = self.threads
 
@@ -329,8 +331,21 @@ class Promoter_Calculator(object):
 
         def _next_position():
             for next_TSS in target_tss:
-                yield (sequence, next_TSS, model_params)
-        
+                if len(sequence) < 400:
+                    locale = next_TSS
+                    region = sequence
+                elif next_TSS < 200:
+                    locale = next_TSS
+                    region = sequence[:400]
+                elif next_TSS > len(sequence) - 200:
+                    locale = next_TSS - (len(sequence) - 400)
+                    region = sequence[len(sequence)-400:]
+                else:
+                    locale = 100
+                    region = sequence[next_TSS-100:next_TSS+100]
+
+                yield (region, next_TSS, model_params, locale)
+
         if threads > 1:
             with concurrent.futures.ProcessPoolExecutor(max_workers=threads) as multiprocessor:
                 futures: list = []
@@ -338,6 +353,8 @@ class Promoter_Calculator(object):
                     future_object = multiprocessor.submit(self.worker, *task)
                     future_object.add_done_callback(lambda x: callback())
                     futures.append(future_object)
+                    while len(multiprocessor._pending_work_items) > 5*threads:
+                        continue
                 parallel_output = [future.result() for future in futures]
         else:
             parallel_output: list = []
@@ -363,7 +380,7 @@ class Promoter_Calculator(object):
         return (Min_States, All_States)
 
     @staticmethod
-    def worker(sequence, TSS, model_params):
+    def worker(sequence, TSS, model_params, locale):
         results = []
 
         UPS_length = 24

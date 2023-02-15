@@ -9,6 +9,7 @@ from copy import copy
 from .promoter_calculator import Promoter_Calculator, PromoCalcResults
 from dataclasses import dataclass
 from typing import Callable
+from memory_profiler import profile
 
 if importlib.util.find_spec("progress") is not None:
     from progress.bar import Bar
@@ -42,11 +43,12 @@ class PromoCalcResult(PromoCalcResults):
     pass
 
 
-def promoter_calculator(sequence, threads=1, verbosity=1, callback=None):
+def promoter_calculator(sequence, threads=1, verbosity=1, callback=None, circular=False):
     begin = time.time()
     #sequence = "".join([random.choice(['A','G','C','T']) for x in range(100000)])
     sequence = sequence.upper()
     output = []
+
 
     # Helper function to get raw output
     def _run_calculator(target, start_pos, end_pos, fraction, callback=None):
@@ -94,7 +96,6 @@ def promoter_calculator(sequence, threads=1, verbosity=1, callback=None):
         for result in calculator_result:
             result['length'] = len(result['promoter_sequence'])
 
-
         # Filter out overlapping promoters
 
         calculator_result.sort(key=lambda x: x['TSS'])
@@ -102,6 +103,7 @@ def promoter_calculator(sequence, threads=1, verbosity=1, callback=None):
 
         to_keep = []
         length = len(calculator_result)
+        average = sum([x['dG_total'] for x in calculator_result]) / length
 
         # Legacy overlap filter
         for i in range(length):
@@ -129,14 +131,14 @@ def promoter_calculator(sequence, threads=1, verbosity=1, callback=None):
             if promotor['drop'] == False:
                 to_keep.append(promotor)
         
-        return to_keep
+        return to_keep, length, average
 
 
     # Run raw output of calculator, chunk if necessary
     fraction_length = 2500
 
 
-    if len(sequence) >= 5*fraction_length:
+    if len(sequence) >= 5*fraction_length and False:
         if verbosity >= 2:
             print('Large input detected. Chunking sequence into smaller pieces.')
         fractions = math.floor(len(sequence)/fraction_length)
@@ -156,6 +158,9 @@ def promoter_calculator(sequence, threads=1, verbosity=1, callback=None):
         
 
         run_number = 0
+        
+        sample_hits = []
+        sample_averages = []
 
         for i in range(fractions):
             if i == fractions-1:
@@ -169,9 +174,15 @@ def promoter_calculator(sequence, threads=1, verbosity=1, callback=None):
             
             target_sequence = sequence[start_pos:end_pos]
 
-            result = _run_calculator(target_sequence, start_pos, end_pos, i, callback=callback)
+            result, num_hits, average = _run_calculator(target_sequence, start_pos, end_pos, i, callback=callback)
+            sample_hits.append(num_hits)
+            sample_averages.append(average)
             output.extend(result)
             run_number += len(target_sequence)
+
+        # Calculate weighted average
+        num_hits = sum(sample_hits)
+        average = sum([x*y for x,y in zip(sample_hits, sample_averages)]) / num_hits
 
     else:
         if not callback:
@@ -180,18 +191,18 @@ def promoter_calculator(sequence, threads=1, verbosity=1, callback=None):
             else:
                 callback = lambda: None
 
-        result = _run_calculator(sequence, 0, len(sequence), 0, callback=callback)
+        result, num_hits, average = _run_calculator(sequence, 0, len(sequence), 0, callback=callback)
         output.extend(result)
 
+    print(num_hits, average)
 
     # If the DNA is circular, examine the junction
-    ciruclar = False
-    if ciruclar:
+    if circular:
         if verbosity >= 2:
             print("Circular DNA detected. Examining junction.")
         # Get the junction
         junction = sequence[-100:] + sequence[:100]
-        result = _run_calculator(junction, len(sequence)-100, len(sequence)+100, "junction")
+        result, num_hits, average = _run_calculator(junction, len(sequence)-100, len(sequence)+100, "junction")
         # Filter out promotors that don't cross the junction
         for result in result:
             if result['strand'] == '+':
