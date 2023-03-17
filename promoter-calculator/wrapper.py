@@ -9,7 +9,6 @@ from copy import copy
 from .promoter_calculator import Promoter_Calculator, PromoCalcResults
 from dataclasses import dataclass
 from typing import Callable
-from memory_profiler import profile
 from .util import timer
 
 

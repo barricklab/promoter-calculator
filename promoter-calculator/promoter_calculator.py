@@ -12,7 +12,6 @@ import os
 from dataclasses import dataclass
 from typing import Callable
 import concurrent.futures
-from memory_profiler import profile
 from time import sleep
 from copy import copy, deepcopy
 
