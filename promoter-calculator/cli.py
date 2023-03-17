@@ -69,8 +69,13 @@ def main():
         default=1
     )
 
-    # @TODO: Add option to specify output file
-    # @TODO: Add option to run quietly
+    parser.add_argument('-c',
+        action='store_true',
+        dest='c',
+        required=False,
+        help='Indecate the input is a circular sequence.',
+        default=False)
+    
 
     options = parser.parse_args()
 
@@ -91,13 +96,15 @@ def main():
             sequence = []
             for line in sequence_lines:
                 line = line.strip()
+                if ">" in line:
+                    continue
                 sequence.append(line)
             sequence = "".join(sequence)
             print(f"Sequence length: {len(sequence)}")
     else:
         sequence = options.i
 
-    output = promoter_calculator(sequence, verbosity = options.v, threads = options.j)
+    output = promoter_calculator(sequence, verbosity = options.v, threads = options.j, circular=options.c)
 
     if not options.o:
         print_promo_calculator(output)

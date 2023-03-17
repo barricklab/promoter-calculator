@@ -5,6 +5,9 @@ import numpy as np
 import itertools
 import collections
 import operator
+from typing import Callable
+import time
+from functools import wraps
 
 groove_access = {'CG' : 43,
                  'CA':  42, 'TG' : 42,  #revcomp
@@ -228,3 +231,18 @@ def kmer_encoders(k):
     onehot_encoder = OneHotEncoder(sparse_output=False)
     onehot_encoder.fit(kmer_array.reshape(-1, 1))
     return onehot_encoder
+
+def timer(function: Callable) -> Callable:
+    """Print the runtime of the decorated function"""
+    @wraps(function)
+    def wrapper_timer(*args, **kwargs):
+        start_time = time.perf_counter()  # 1
+        value = function(*args, **kwargs)
+        end_time = time.perf_counter()  # 2
+        run_time = end_time - start_time  # 3
+        print(f"Finished {function.__name__!r} in {run_time:.4f} secs")
+        return value
+    return wrapper_timer
+
+
+#EOF

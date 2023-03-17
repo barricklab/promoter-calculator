@@ -10,6 +10,8 @@ from .promoter_calculator import Promoter_Calculator, PromoCalcResults
 from dataclasses import dataclass
 from typing import Callable
 from memory_profiler import profile
+from .util import timer
+
 
 if importlib.util.find_spec("progress") is not None:
     from progress.bar import Bar
@@ -130,15 +132,16 @@ def promoter_calculator(sequence, threads=1, verbosity=1, callback=None, circula
                             break
             if promotor['drop'] == False:
                 to_keep.append(promotor)
-        
+
         return to_keep, length, average
+        
 
 
     # Run raw output of calculator, chunk if necessary
     fraction_length = 2500
 
 
-    if len(sequence) >= 5*fraction_length and False:
+    if len(sequence) >= 5*fraction_length and False:  # Disabled code
         if verbosity >= 2:
             print('Large input detected. Chunking sequence into smaller pieces.')
         fractions = math.floor(len(sequence)/fraction_length)
@@ -194,9 +197,8 @@ def promoter_calculator(sequence, threads=1, verbosity=1, callback=None, circula
         result, num_hits, average = _run_calculator(sequence, 0, len(sequence), 0, callback=callback)
         output.extend(result)
 
-    print(num_hits, average)
-
     # If the DNA is circular, examine the junction
+    junction_results = {}
     if circular:
         if verbosity >= 2:
             print("Circular DNA detected. Examining junction.")
@@ -210,11 +212,32 @@ def promoter_calculator(sequence, threads=1, verbosity=1, callback=None, circula
             if result['strand'] == '-':
                 bounds = [result['disc_position'][0], result['UP_position'][1]]
             if bounds[0] <= 100 and bounds[1] >= 101:
-                output.extend(result)
+                # Subtract 100 from the location to make the position appropriate relative to the rest of the sequence
+                result['UP_position'][0] -= 100
+                result['UP_position'][1] -= 100
+                result['hex35_position'][0] -= 100
+                result['hex35_position'][1] -= 100
+                result['spacer_position'][0] -= 100
+                result['spacer_position'][1] -= 100
+                result['hex10_position'][0] -= 100
+                result['hex10_position'][1] -= 100
+                result['disc_position'][0] -= 100
+                result['disc_position'][1] -= 100
+                result['TSS'] -= 100
+                if result['TSS'] < 0:
+                    result['TSS'] += len(sequence)
+                junction_results[f"{result['TSS']}{result['strand']}"] = result
+    
+        # Replace TSS with the actual position in the sequence
+        for i in range(len(output)):
+            position = output[i]['TSS']
+            strand = output[i]['strand']
+            if f"{position}{strand}" not in junction_results.keys():
+                continue  # Ignore positions that are not hit by circularization
+            # Take the more negative dG_total
+            if output[i]['dG_total'] > junction_results[f"{position}{strand}"]['dG_total']:
+                output[i] = junction_results[f"{position}{strand}"]
 
-    if verbosity >= 2:
-        print("Removing duplicates.")
-    output = [i for n, i in enumerate(output) if i not in output[n + 1:]] # remove duplicates
     # Find the best results
     output.sort(key=lambda x: x['Tx_rate'])
     output = output[::-1]

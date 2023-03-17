@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from typing import Callable
 import concurrent.futures
 from memory_profiler import profile
+from time import sleep
+from copy import copy, deepcopy
 
 # Optional dependency
 if importlib.util.find_spec("progress") is not None:
@@ -301,15 +303,18 @@ class Promoter_Calculator(object):
             self.BETA = 1.636217004872062
 
     # Identify promoter with minimum dG_total (across many possible promoter states) for each TSS position in an inputted sequence.
-    def predict(self, sequence, TSS_range, callback=None):
+    def predict(self, sequence, TSS_range, callback=None, min_only=True):
         """ Predict the free energy of a promoter configuration """
 
-        min_states, all_states = self.parallelizer(sequence, TSS_range, callback=callback, verbosity=self.verbosity)
+        min_states, all_states = self.parallelizer(sequence, TSS_range,
+                                                   callback=callback,
+                                                   verbosity=self.verbosity,
+                                                   min_only=min_only)
 
         return (min_states, all_states)
 
  
-    def parallelizer(self, sequence, TSS_range, callback=None, verbosity=1):
+    def parallelizer(self, sequence, TSS_range, callback=None, min_only=True, verbosity=1):
         threads = self.threads
 
         Min_States = {}
@@ -330,22 +335,24 @@ class Promoter_Calculator(object):
                         'BETA' : self.BETA,}
 
         def _next_position():
+            sample_region = 200
             for next_TSS in target_tss:
-                if len(sequence) < 400:
+                if len(sequence) < sample_region:
                     locale = next_TSS
                     region = sequence
-                elif next_TSS < 200:
+                elif next_TSS < sample_region/2:
                     locale = next_TSS
-                    region = sequence[:400]
-                elif next_TSS > len(sequence) - 200:
-                    locale = next_TSS - (len(sequence) - 400)
-                    region = sequence[len(sequence)-400:]
+                    region = sequence[:sample_region]
+                elif next_TSS > len(sequence) - sample_region/2:
+                    locale = next_TSS - (len(sequence) - sample_region)
+                    region = sequence[len(sequence)-sample_region:]
                 else:
-                    locale = 100
-                    region = sequence[next_TSS-100:next_TSS+100]
-
+                    locale = int(sample_region/2)
+                    region = sequence[int(next_TSS-(sample_region/2)) : int(next_TSS+(sample_region/2))]
                 yield (region, next_TSS, model_params, locale)
 
+        sleep_time = 0.01
+        sleep_interval = 0.0001
         if threads > 1:
             with concurrent.futures.ProcessPoolExecutor(max_workers=threads) as multiprocessor:
                 futures: list = []
@@ -353,7 +360,10 @@ class Promoter_Calculator(object):
                     future_object = multiprocessor.submit(self.worker, *task)
                     future_object.add_done_callback(lambda x: callback())
                     futures.append(future_object)
-                    while len(multiprocessor._pending_work_items) > 5*threads:
+                    while len(multiprocessor._pending_work_items) > 5*threads and sleep_time:
+                        sleep(sleep_time)
+                        if len(multiprocessor._pending_work_items) == 0:
+                            sleep_time -= sleep_interval
                         continue
                 parallel_output = [future.result() for future in futures]
         else:
@@ -366,10 +376,10 @@ class Promoter_Calculator(object):
         # Unpack results
 
         parallel_output = [output for output in parallel_output if output]  # Remove empty results
-
-
+        
         for result_group in parallel_output:
-            for TSS, DISC_length, SPACER_length, result in result_group:
+            for hit in result_group:
+                TSS, DISC_length, SPACER_length, result = hit
                 All_States[TSS] = {}
                 All_States[TSS][ (DISC_length, SPACER_length) ] = result
                 if TSS in Min_States:
@@ -380,7 +390,7 @@ class Promoter_Calculator(object):
         return (Min_States, All_States)
 
     @staticmethod
-    def worker(sequence, TSS, model_params, locale):
+    def worker(sequence, TSS, model_params, locale, min_only=True):
         results = []
 
         UPS_length = 24
@@ -396,17 +406,17 @@ class Promoter_Calculator(object):
         
 
         for DISC_length in range(DISC_length_range[0],DISC_length_range[1]):
-            if TSS - DISC_length >= 0 and TSS + ITR_length <= len(sequence):
-                tempdisc = sequence[ TSS - DISC_length : TSS  ]
-                tempITR  = sequence[ TSS : TSS + ITR_length]
+            if locale - DISC_length >= 0 and locale + ITR_length <= len(sequence):
+                tempdisc = sequence[ locale - DISC_length : locale  ]
+                tempITR  = sequence[ locale : locale + ITR_length]
 
                 for SPACER_length in range(SPACER_length_range[0], SPACER_length_range[1]):
 
-                    if TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_length - UPS_HEX35_SPACER >= 0:
-                        temp10     = sequence[ TSS - DISC_length - HEX10_length : TSS - DISC_length]
-                        tempspacer = sequence[ TSS - DISC_length - HEX10_length - SPACER_length : TSS - DISC_length - HEX10_length ]
-                        temp35     = sequence[ TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length : TSS - DISC_length - HEX10_length - SPACER_length]
-                        tempUP     = sequence[ TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_length - UPS_HEX35_SPACER:  TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_HEX35_SPACER]
+                    if locale - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_length - UPS_HEX35_SPACER >= 0:
+                        temp10     = sequence[ locale - DISC_length - HEX10_length : locale - DISC_length]
+                        tempspacer = sequence[ locale - DISC_length - HEX10_length - SPACER_length : locale - DISC_length - HEX10_length ]
+                        temp35     = sequence[ locale - DISC_length - HEX10_length - SPACER_length - HEX35_length : locale - DISC_length - HEX10_length - SPACER_length]
+                        tempUP     = sequence[ locale - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_length - UPS_HEX35_SPACER:  locale - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_HEX35_SPACER]
 
                         model_results = linear_free_energy_model(tempUP,
                                                                     temp35,
@@ -429,13 +439,26 @@ class Promoter_Calculator(object):
                                     model_results.dg_ext10 +
                                     model_results.dg_UP)
 
-                        Tx_rate = model_params['K'] * math.exp(- model_params['BETA'] * model_results.dg_total )
-
-
-                        result = {'promoter_sequence' : sequence[TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_length - UPS_HEX35_SPACER : TSS + ITR_length ],
-                                    'TSS' : TSS, 'UP' : tempUP, 'hex35' : temp35, 'spacer' : tempspacer, 'hex10' : temp10, 'disc' : tempdisc, 'ITR' : tempITR,
-                                    'dG_total' : model_results.dg_total, 'dG_10' : model_results.dg_10, 'dG_35' : model_results.dg_35, 'dG_disc' : model_results.dg_disc, 'dG_ITR' : model_results.dg_ITR, 'dG_ext10' : model_results.dg_ext10, 'dG_spacer' : model_results.dg_spacer, 'dG_UP' : model_results.dg_UP, 'dG_bind' : dG_bind,
-                                    'Tx_rate' : Tx_rate,
+                        Tx_rate = float(model_params['K'] * math.exp(- model_params['BETA'] * model_results.dg_total ))
+                        
+                        result = {'promoter_sequence' : sequence[locale - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_length - UPS_HEX35_SPACER : locale + ITR_length ],
+                                    'TSS' : TSS,
+                                    'UP' : tempUP, 
+                                    'hex35' : temp35, 
+                                    'spacer' : tempspacer, 
+                                    'hex10' : temp10, 
+                                    'disc' : tempdisc, 
+                                    'ITR' : tempITR,
+                                    'dG_total' : copy(model_results.dg_total), 
+                                    'dG_10' : copy(model_results.dg_10), 
+                                    'dG_35' : copy(model_results.dg_35), 
+                                    'dG_disc' : copy(model_results.dg_disc), 
+                                    'dG_ITR' : copy(model_results.dg_ITR), 
+                                    'dG_ext10' : copy(model_results.dg_ext10), 
+                                    'dG_spacer' : copy(model_results.dg_spacer), 
+                                    'dG_UP' : copy(model_results.dg_UP), 
+                                    'dG_bind' : copy(dG_bind),
+                                    'Tx_rate' : copy(Tx_rate),
                                     'UP_position' : [TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_HEX35_SPACER - UPS_length,
                                                     TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length - UPS_HEX35_SPACER],
                                     'hex35_position' : [TSS - DISC_length - HEX10_length - SPACER_length - HEX35_length, TSS - DISC_length - HEX10_length - SPACER_length],
@@ -443,9 +466,26 @@ class Promoter_Calculator(object):
                                     'hex10_position' : [TSS - DISC_length - HEX10_length, TSS - DISC_length],
                                     'disc_position' : [TSS - DISC_length, TSS]
                                     }
+                        
 
+
+                        
                         result = PromoCalcResults(**result, fraction=None, strand=None, drop=False, length = False)
                         results.append([TSS, DISC_length, SPACER_length, result])
+
+        if not results:
+            return results
+        
+        if min_only:
+            min_result = None
+            for TSS, DISC_length, SPACER_length, finding in results:
+                if min_result:
+                    if finding['dG_total'] < min_result[3]['dG_total']:
+                        min_result = [TSS, DISC_length, SPACER_length, finding]
+                else:
+                    min_result = [TSS, DISC_length, SPACER_length, finding]
+            return [min_result]
+        
         return results
 
     def run(self, sequence, TSS_range = None, callback=None):
@@ -475,6 +515,7 @@ class Promoter_Calculator(object):
         #      200-300
         #500-275 = 225
         #
+
         for TSS in Reverse_Min_States_Temp.keys():
             Reverse_Min_States[len(sequence) - TSS] = Reverse_Min_States_Temp[TSS]
             #Reverse_All_States[len(sequence) - TSS] = Reverse_All_States_Temp[TSS]
