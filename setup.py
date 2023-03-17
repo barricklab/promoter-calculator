@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="promotercalculator",
-    version="1.1",
+    version="1.2",
     packages=["promoter_calculator"],
     package_dir={'promoter_calculator': 'promoter-calculator'},
 
