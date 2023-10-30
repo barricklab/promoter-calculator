@@ -104,6 +104,8 @@ def promoter_calculator(sequence, threads=1, verbosity=1, callback=None, circula
 
         to_keep = []
         length = len(calculator_result)
+        if length == 0:
+            return [], None, None
         average = sum([x['dG_total'] for x in calculator_result]) / length
 
         # Legacy overlap filter
@@ -119,11 +121,11 @@ def promoter_calculator(sequence, threads=1, verbosity=1, callback=None, circula
                 elif promotor['strand'] != other_promoter['strand']:
                     continue
                 for position_type in ['UP_position', 'hex35_position', 'spacer_position', 'hex10_position', 'disc_position']:
-                    if promotor[position_type] == other_promoter[position_type]:
-                        if promotor['dG_total'] < other_promoter['dG_total']:
+                    if promotor[position_type] == other_promoter[position_type]: # Keep the more negative dG total, drop the current promoter for ties
+                        if promotor['dG_total'] > other_promoter['dG_total']: 
                             promotor['drop'] = True
                             break
-                        if promotor['dG_total'] > other_promoter['dG_total']:
+                        if promotor['dG_total'] < other_promoter['dG_total']:
                             other_promoter['drop'] = True
                             break
                         else:
