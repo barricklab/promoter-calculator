@@ -105,6 +105,9 @@ def main():
         sequence = options.i
 
     output = promoter_calculator(sequence, verbosity = options.v, threads = options.j, circular=options.c)
+    if len(output) == 0:
+        print("No promotors found.")
+        return
 
     if not options.o:
         print_promo_calculator(output)
