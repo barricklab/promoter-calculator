@@ -25,7 +25,7 @@ def print_promo_calculator(output):
 
 def main():
     """ CLI entry point """
-    parser = argparse.ArgumentParser(description=f'Salis Lab Promoter Calculator')
+    parser = argparse.ArgumentParser(description=f'Promoter-Calculator (Barrick Lab Fork)')
 
     parser.add_argument(
         '-i', '--input',
@@ -75,7 +75,7 @@ def main():
         required=False,
         help='Indecate the input is a circular sequence.',
         default=False)
-    
+
 
     options = parser.parse_args()
 
